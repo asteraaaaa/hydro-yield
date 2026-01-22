@@ -12,8 +12,11 @@ from pathlib import Path
 class ModelLoader:
     """Singleton service to load and serve pre-trained models"""
 
-    def __init__(self, models_dir: str = "backend/models"):
-        self.models_dir = Path(models_dir)
+    def __init__(self, models_dir: Optional[str] = None):
+        if models_dir is None:
+            self.models_dir = Path(__file__).resolve().parent
+        else:
+            self.models_dir = Path(models_dir)
         self.regressor = None
         self.classifier = None
         self.clusterer = None
