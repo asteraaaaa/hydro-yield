@@ -15,6 +15,7 @@ import type {
 } from "../types";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const DEFAULT_TIMEOUT_MS = 15000;
 
 class APIClient {
   private baseUrl: string;
@@ -23,20 +24,51 @@ class APIClient {
     this.baseUrl = baseUrl;
   }
 
+  private async fetchJson<T>(
+    path: string,
+    init?: RequestInit,
+    timeoutMs: number = DEFAULT_TIMEOUT_MS
+  ): Promise<T> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(`${this.baseUrl}${path}`, {
+        ...init,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const errorBody = await response
+          .json()
+          .catch(() => ({ detail: `Request failed with status ${response.status}` }));
+        throw new Error(errorBody.detail || "Request failed");
+      }
+
+      return response.json();
+    } catch (error: any) {
+      if (error?.name === "AbortError") {
+        throw new Error(
+          `Request timed out after ${Math.round(timeoutMs / 1000)}s. ` +
+            `Ensure the backend is running at ${this.baseUrl}.`
+        );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   // ============================================================================
   // HEALTH & INFO
   // ============================================================================
 
   async health(): Promise<any> {
-    const response = await fetch(`${this.baseUrl}/health`);
-    if (!response.ok) throw new Error("Health check failed");
-    return response.json();
+    return this.fetchJson("/health", undefined, 5000);
   }
 
   async getModelInfo(): Promise<ModelInfo> {
-    const response = await fetch(`${this.baseUrl}/models/info`);
-    if (!response.ok) throw new Error("Failed to fetch model info");
-    return response.json();
+    return this.fetchJson("/models/info");
   }
 
   // ============================================================================
@@ -44,15 +76,11 @@ class APIClient {
   // ============================================================================
 
   async getCurrentTelemetry(): Promise<{ data: TelemetryPoint | null; message?: string }> {
-    const response = await fetch(`${this.baseUrl}/telemetry/current`);
-    if (!response.ok) throw new Error("Failed to fetch current telemetry");
-    return response.json();
+    return this.fetchJson("/telemetry/current");
   }
 
   async getTelemetryHistory(window: TimeWindow = "7d"): Promise<TelemetrySeries> {
-    const response = await fetch(`${this.baseUrl}/telemetry/history?window=${window}`);
-    if (!response.ok) throw new Error("Failed to fetch telemetry history");
-    return response.json();
+    return this.fetchJson(`/telemetry/history?window=${window}`);
   }
 
   async startSimulation(
@@ -60,7 +88,7 @@ class APIClient {
     freqMinutes: number = 15,
     durationHours?: number
   ): Promise<any> {
-    const response = await fetch(`${this.baseUrl}/telemetry/sim/start`, {
+    return this.fetchJson("/telemetry/sim/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -69,36 +97,24 @@ class APIClient {
         duration_hours: durationHours,
       }),
     });
-    if (!response.ok) throw new Error("Failed to start simulation");
-    return response.json();
   }
 
   async stopSimulation(): Promise<any> {
-    const response = await fetch(`${this.baseUrl}/telemetry/sim/stop`, {
-      method: "POST",
-    });
-    if (!response.ok) throw new Error("Failed to stop simulation");
-    return response.json();
+    return this.fetchJson("/telemetry/sim/stop", { method: "POST" });
   }
 
   async resetSimulation(): Promise<any> {
-    const response = await fetch(`${this.baseUrl}/telemetry/sim/reset`, {
-      method: "POST",
-    });
-    if (!response.ok) throw new Error("Failed to reset simulation");
-    return response.json();
+    return this.fetchJson("/telemetry/sim/reset", { method: "POST" });
   }
 
   async uploadCSV(file: File): Promise<any> {
     const formData = new FormData();
     formData.append("file", file);
 
-    const response = await fetch(`${this.baseUrl}/telemetry/upload_csv`, {
+    return this.fetchJson("/telemetry/upload_csv", {
       method: "POST",
       body: formData,
     });
-    if (!response.ok) throw new Error("Failed to upload CSV");
-    return response.json();
   }
 
   // ============================================================================
@@ -111,51 +127,34 @@ class APIClient {
     window: string;
     data_points: number;
   }> {
-    const response = await fetch(`${this.baseUrl}/features/compute`, {
+    return this.fetchJson("/features/compute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ window }),
     });
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || "Failed to compute features");
-    }
-    return response.json();
   }
 
   async predictManual(features: FeatureVector): Promise<PredictionResponse> {
-    const response = await fetch(`${this.baseUrl}/predict/manual`, {
+    return this.fetchJson("/predict/manual", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(features),
     });
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || "Prediction failed");
-    }
-    return response.json();
   }
 
   async predictAuto(window: string = "7d"): Promise<PredictionResponse> {
-    const response = await fetch(`${this.baseUrl}/predict/auto`, {
+    return this.fetchJson("/predict/auto", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ window }),
     });
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || "Auto prediction failed");
-    }
-    return response.json();
   }
 
   async getFeatureImportance(): Promise<{
     feature_importance: Record<string, number>;
     description: string;
   }> {
-    const response = await fetch(`${this.baseUrl}/explain/feature_importance`);
-    if (!response.ok) throw new Error("Failed to fetch feature importance");
-    return response.json();
+    return this.fetchJson("/explain/feature_importance");
   }
 
   // ============================================================================
@@ -166,19 +165,15 @@ class APIClient {
     count: number;
     analyses: AnalysisResult[];
   }> {
-    const response = await fetch(`${this.baseUrl}/history/analyses?limit=${limit}`);
-    if (!response.ok) throw new Error("Failed to fetch analysis history");
-    return response.json();
+    return this.fetchJson(`/history/analyses?limit=${limit}`);
   }
 
   async saveAnalysis(analysis: AnalysisResult): Promise<any> {
-    const response = await fetch(`${this.baseUrl}/history/save`, {
+    return this.fetchJson("/history/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(analysis),
     });
-    if (!response.ok) throw new Error("Failed to save analysis");
-    return response.json();
   }
 }
 

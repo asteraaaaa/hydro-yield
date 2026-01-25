@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
     print("🚀 Initializing HydroYield Backend...")
     
     # Load ML models
-    model_loader = ModelLoader(models_dir="backend/models")
+    model_loader = ModelLoader()
     model_loader.load_all_models()
     
     # Initialize telemetry generator
